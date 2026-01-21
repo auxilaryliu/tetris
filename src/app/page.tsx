@@ -352,7 +352,7 @@ export default function Page() {
     resetPlayer();
     drawPreview();
     update();
-  }, [level]);
+  }, []);
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-[#1e1b2e] to-[#0f0c1d] text-white">
