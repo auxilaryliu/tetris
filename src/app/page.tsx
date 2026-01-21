@@ -2,9 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+// === CONFIG ===
 const COLS = 12;
 const ROWS = 20;
 const BLOCK_SIZE = 20;
+
+// DAS / ARR tuning
+const DAS = 150; // ms before repeat
+const ARR = 30;  // ms per repeat
 
 const COLORS = [
   '#000',
@@ -55,8 +60,14 @@ const SHAPES: Record<string, number[][]> = {
   ],
 };
 
+function randomPiece() {
+  const keys = Object.keys(SHAPES);
+  return SHAPES[keys[(Math.random() * keys.length) | 0]];
+}
+
 export default function Page() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const previewRef = useRef<HTMLCanvasElement>(null);
 
   const [score, setScore] = useState(0);
   const [lines, setLines] = useState(0);
@@ -77,11 +88,25 @@ export default function Page() {
     const ctx = canvas.getContext('2d')!;
     ctx.scale(BLOCK_SIZE, BLOCK_SIZE);
 
+    const previewCanvas = previewRef.current!;
+    const pctx = previewCanvas.getContext('2d')!;
+    pctx.scale(20, 20);
+
     const arena = createMatrix(COLS, ROWS);
+
+    let nextPiece = randomPiece();
 
     const player = {
       pos: { x: 0, y: 0 },
       matrix: randomPiece(),
+    };
+
+    const input = {
+      left: false,
+      right: false,
+      lastMoveTime: 0,
+      holdStart: 0,
+      direction: 0,
     };
 
     function createMatrix(w: number, h: number) {
@@ -90,23 +115,13 @@ export default function Page() {
       return m;
     }
 
-    function randomPiece() {
-      const keys = Object.keys(SHAPES);
-      const key = keys[(Math.random() * keys.length) | 0];
-      return SHAPES[key];
-    }
-
-    function collide() {
-      const m = player.matrix;
-      const o = player.pos;
-      for (let y = 0; y < m.length; y++) {
-        for (let x = 0; x < m[y].length; x++) {
+    function collide(matrix = player.matrix, pos = player.pos) {
+      for (let y = 0; y < matrix.length; y++) {
+        for (let x = 0; x < matrix[y].length; x++) {
           if (
-            m[y][x] !== 0 &&
-            (arena[y + o.y] && arena[y + o.y][x + o.x]) !== 0
-          ) {
-            return true;
-          }
+            matrix[y][x] !== 0 &&
+            (arena[y + pos.y] && arena[y + pos.y][x + pos.x]) !== 0
+          ) return true;
         }
       }
       return false;
@@ -115,9 +130,7 @@ export default function Page() {
     function merge() {
       player.matrix.forEach((row, y) => {
         row.forEach((value, x) => {
-          if (value !== 0) {
-            arena[y + player.pos.y][x + player.pos.x] = value;
-          }
+          if (value !== 0) arena[y + player.pos.y][x + player.pos.x] = value;
         });
       });
     }
@@ -132,11 +145,12 @@ export default function Page() {
     }
 
     function resetPlayer() {
-      player.matrix = randomPiece();
+      player.matrix = nextPiece;
+      nextPiece = randomPiece();
+      drawPreview();
+
       player.pos.y = 0;
-      player.pos.x =
-        ((arena[0].length / 2) | 0) -
-        ((player.matrix[0].length / 2) | 0);
+      player.pos.x = ((arena[0].length / 2) | 0) - ((player.matrix[0].length / 2) | 0);
 
       if (collide()) {
         arena.forEach(row => row.fill(0));
@@ -148,7 +162,6 @@ export default function Page() {
 
     function sweep() {
       let rowCount = 0;
-
       outer: for (let y = arena.length - 1; y > 0; y--) {
         for (let x = 0; x < arena[y].length; x++) {
           if (arena[y][x] === 0) continue outer;
@@ -179,8 +192,9 @@ export default function Page() {
       }
     }
 
-    function drawRoundedBlock(x: number, y: number, color: string) {
+    function drawRoundedBlock(x: number, y: number, color: string, alpha = 1) {
       const r = 0.15;
+      ctx.globalAlpha = alpha;
       ctx.fillStyle = color;
       ctx.shadowColor = color;
       ctx.shadowBlur = 0.4;
@@ -197,17 +211,33 @@ export default function Page() {
       ctx.quadraticCurveTo(x, y, x + r, y);
       ctx.closePath();
       ctx.fill();
+      ctx.globalAlpha = 1;
     }
 
-    function drawMatrix(matrix: number[][], offset: { x: number; y: number }) {
+    function drawMatrix(matrix: number[][], offset: { x: number; y: number }, ghost = false) {
       matrix.forEach((row, y) => {
         row.forEach((value, x) => {
           if (value !== 0) {
-            drawRoundedBlock(
-              x + offset.x,
-              y + offset.y,
-              COLORS[value]
-            );
+            drawRoundedBlock(x + offset.x, y + offset.y, COLORS[value], ghost ? 0.25 : 1);
+          }
+        });
+      });
+    }
+
+    function getGhostPosition() {
+      const ghostPos = { ...player.pos };
+      while (!collide(player.matrix, ghostPos)) ghostPos.y++;
+      ghostPos.y--;
+      return ghostPos;
+    }
+
+    function drawPreview() {
+      pctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+      nextPiece.forEach((row, y) => {
+        row.forEach((value, x) => {
+          if (value !== 0) {
+            pctx.fillStyle = COLORS[value];
+            pctx.fillRect(x, y, 1, 1);
           }
         });
       });
@@ -217,6 +247,9 @@ export default function Page() {
       ctx.fillStyle = '#1a1a1a';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       drawMatrix(arena, { x: 0, y: 0 });
+
+      const ghostPos = getGhostPosition();
+      drawMatrix(player.matrix, ghostPos, true);
       drawMatrix(player.matrix, player.pos);
     }
 
@@ -224,10 +257,26 @@ export default function Page() {
     let dropInterval = 220;
     let lastTime = 0;
 
+    function handleHorizontalInput(time: number) {
+      if (!input.left && !input.right) return;
+
+      const dir = input.direction;
+      const elapsed = time - input.holdStart;
+
+      if (elapsed < DAS) return;
+
+      if (time - input.lastMoveTime > ARR) {
+        move(dir);
+        input.lastMoveTime = time;
+      }
+    }
+
     function update(time = 0) {
       const deltaTime = time - lastTime;
       lastTime = time;
       dropCounter += deltaTime;
+
+      handleHorizontalInput(time);
 
       if (dropCounter > dropInterval) {
         player.pos.y++;
@@ -270,14 +319,38 @@ export default function Page() {
     }
 
     document.addEventListener('keydown', e => {
-      if (e.key === 'ArrowLeft') move(-1);
-      if (e.key === 'ArrowRight') move(1);
+      if (e.key === 'ArrowLeft') {
+        if (!input.left) {
+          input.left = true;
+          input.right = false;
+          input.direction = -1;
+          input.holdStart = performance.now();
+          input.lastMoveTime = 0;
+          move(-1);
+        }
+      }
+      if (e.key === 'ArrowRight') {
+        if (!input.right) {
+          input.right = true;
+          input.left = false;
+          input.direction = 1;
+          input.holdStart = performance.now();
+          input.lastMoveTime = 0;
+          move(1);
+        }
+      }
       if (e.key === 'ArrowDown') drop();
       if (e.key === 'ArrowUp') rotate(player.matrix);
       if (e.key === ' ') hardDrop();
     });
 
+    document.addEventListener('keyup', e => {
+      if (e.key === 'ArrowLeft') input.left = false;
+      if (e.key === 'ArrowRight') input.right = false;
+    });
+
     resetPlayer();
+    drawPreview();
     update();
   }, [level]);
 
@@ -292,13 +365,20 @@ export default function Page() {
         <div>Level: <span className="font-bold">{level}</span></div>
       </div>
 
-      <div className="p-4 rounded-2xl bg-white/10 backdrop-blur shadow-xl">
-        <canvas
-          ref={canvasRef}
-          width={COLS * BLOCK_SIZE}
-          height={ROWS * BLOCK_SIZE}
-          className="rounded-xl"
-        />
+      <div className="flex gap-6">
+        <div className="p-4 rounded-2xl bg-white/10 backdrop-blur shadow-xl">
+          <canvas
+            ref={canvasRef}
+            width={COLS * BLOCK_SIZE}
+            height={ROWS * BLOCK_SIZE}
+            className="rounded-xl"
+          />
+        </div>
+
+        <div className="flex flex-col items-center gap-2 invisible w-0 overflow-hidden">
+          <div className="text-sm opacity-70">Next</div>
+          <canvas ref={previewRef} width={80} height={80} className="bg-white/10 rounded-lg" />
+        </div>
       </div>
 
       <p className="mt-4 opacity-70 text-sm">
