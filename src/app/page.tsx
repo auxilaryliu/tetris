@@ -144,6 +144,26 @@ export default function Page() {
       matrix.forEach(row => row.reverse());
     }
 
+    function rotateWithKick() {
+      const posX = player.pos.x;
+      let offset = 1;
+      rotate(player.matrix);
+
+      while (collide()) {
+        player.pos.x += offset;
+        offset = -(offset + (offset > 0 ? 1 : -1));
+
+        if (Math.abs(offset) > player.matrix[0].length) {
+          // undo rotation if all kicks fail
+          rotate(player.matrix);
+          rotate(player.matrix);
+          rotate(player.matrix);
+          player.pos.x = posX;
+          return;
+        }
+      }
+    }
+
     function resetPlayer() {
       player.matrix = nextPiece;
       nextPiece = randomPiece();
@@ -340,7 +360,7 @@ export default function Page() {
         }
       }
       if (e.key === 'ArrowDown') drop();
-      if (e.key === 'ArrowUp') rotate(player.matrix);
+      if (e.key === 'ArrowUp') rotateWithKick();
       if (e.key === ' ') hardDrop();
     });
 
